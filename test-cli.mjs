@@ -3,7 +3,7 @@
  * 运行前需要 node_modules 链接（见根 README 开发节）。
  */
 import { execFileSync } from "node:child_process";
-import { discoverTools, parseToolHelp, buildToolSchema, kebabToCamel } from "./src/index.js";
+import { discoverTools, parseToolHelp, buildToolSchema, kebabToCamel, parseVersion, isNewer, fetchLatestTokensaveVersion } from "./src/index.js";
 
 const BIN = process.env.TOKENSAVE_BINARY ?? "C:\\Users\\wangz\\.cargo\\bin\\tokensave.exe";
 const CWD = process.env.TOKENSAVE_CWD ?? process.cwd();
@@ -37,5 +37,22 @@ const out = execFileSync(BIN, ["tool", "search", "--args", JSON.stringify({ quer
 });
 const ms = Date.now() - t0;
 console.log(`4) tool search ok (${ms}ms):`, out.trim().slice(0, 120));
+
+// 5. 更新检测：版本解析 / 比较
+const ver = parseVersion(execFileSync(BIN, ["--version"], { encoding: "utf8", windowsHide: true }));
+console.log(`5) parseVersion("${ver}") -> ${ver}`);
+if (!ver) throw new Error("version parse failed");
+if (!isNewer("7.10.0", ver)) throw new Error("isNewer 7.10.0 > installed failed");
+if (isNewer(ver, "7.10.0")) throw new Error("isNewer installed > 7.10.0 failed");
+if (isNewer("7.9.0", "7.9.0")) throw new Error("isNewer equal failed");
+console.log("   isNewer ok:", isNewer("7.10.0", ver), "| equal false:", !isNewer("7.9.0", "7.9.0"));
+
+// 6. 更新检测：联网查最新版（网络失败只提示，不失败）
+try {
+  const latest = await fetchLatestTokensaveVersion(10_000);
+  console.log(`6) latest on crates.io: ${latest} | installed: ${ver} | outdated: ${latest && isNewer(latest, ver)}`);
+} catch (err) {
+  console.log(`6) live check skipped (${err.message})`);
+}
 
 console.log("CLI BRIDGE SELF-TEST PASSED");

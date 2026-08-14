@@ -54,6 +54,10 @@ export const Config = s.object({
   bridge: s.union(["mcp", "cli"]).default("mcp"),
   /** cli 模式：单次工具调用超时（毫秒）。 */
   callTimeoutMs: s.number().default(120 * 1000),
+  /** 启动时检查 tokensave 是否有新版本（查 crates.io API）。 */
+  updateCheck: s.boolean().default(true),
+  /** 更新检查网络超时（毫秒）。 */
+  updateCheckTimeoutMs: s.number().default(10 * 1000),
 });
 
 /**
@@ -66,18 +70,38 @@ export async function apply(ctx, config) {
 
   // ── Phase 1: 校验 binary + 同步语义图 ──
   let binaryOk = false;
+  let installedVersion = "";
   try {
     const version = await execFileAsync(config.binary, ["--version"], {
       windowsHide: true,
       timeout: 15_000,
     });
     binaryOk = true;
+    installedVersion = parseVersion(version.stdout) ?? "";
     logger.info(`tokensaver: binary ok (${version.stdout.trim()})`);
   } catch (err) {
     logger.warn(
       `tokensaver: binary "${config.binary}" not usable (${err.message}); ` +
         "工具不会注册。可用 `cargo install tokensave` 安装。"
     );
+  }
+
+  // ── Phase 1.5: 更新检测（查 crates.io 最新版）──
+  if (binaryOk && config.updateCheck) {
+    try {
+      const latest = await fetchLatestTokensaveVersion(config.updateCheckTimeoutMs);
+      if (latest && installedVersion && isNewer(latest, installedVersion)) {
+        logger.warn(
+          `tokensaver: tokensave v${installedVersion} is outdated — latest v${latest} ` +
+            "(run `tokensave upgrade` to update)"
+        );
+      } else if (latest && installedVersion) {
+        logger.info(`tokensaver: tokensave is up to date (v${installedVersion})`);
+      }
+    } catch (err) {
+      // 网络不可用时不打扰：仅 info 级别
+      logger.info(`tokensaver: update check skipped (${err.message})`);
+    }
   }
 
   if (binaryOk && config.autoSync) {
@@ -295,6 +319,49 @@ export function buildToolSchema(toolName, _description, params) {
     properties[key] = spec;
   }
   return properties;
+}
+
+// ---------------------------------------------------------------------------
+// 更新检测：查 crates.io 最新版本
+// ---------------------------------------------------------------------------
+
+/** 从 `tokensave --version` 输出里提取版本号（如 "tokensave 7.9.0" → "7.9.0"）。 */
+export function parseVersion(text) {
+  const m = String(text || "").match(/(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)/);
+  return m ? m[1] : null;
+}
+
+/** 语义化比较：a 比 b 新返回 true（逐段比较点分数字段，忽略 pre-release 后缀）。 */
+export function isNewer(a, b) {
+  const pa = String(a).split(".").map((x) => parseInt(x, 10) || 0);
+  const pb = String(b).split(".").map((x) => parseInt(x, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const da = pa[i] ?? 0;
+    const db = pb[i] ?? 0;
+    if (da !== db) return da > db;
+  }
+  return false;
+}
+
+/**
+ * 查询 crates.io 上 tokensave 的最新稳定版本。
+ * crates.io 要求 User-Agent；超时由 AbortSignal 控制。
+ * 网络不可用 / 解析失败时抛错，调用方负责降级。
+ */
+export async function fetchLatestTokensaveVersion(timeoutMs = 10_000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch("https://crates.io/api/v1/crates/tokensave", {
+      headers: { "User-Agent": "dsh-tokensaver/update-check" },
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`crates.io HTTP ${res.status}`);
+    const data = await res.json();
+    return data?.crate?.max_stable_version ?? null;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // ---------------------------------------------------------------------------

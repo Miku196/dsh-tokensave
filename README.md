@@ -82,6 +82,8 @@ dsh plugin --profile web update dsh-tokensaver
 | `autoSync` | `true` | 启动时 `init`（无索引）/ `sync`（有索引） |
 | `syncTimeoutMs` | 600000 | 同步超时 |
 | `callTimeoutMs` | 120000 | cli 模式单次工具调用超时 |
+| `updateCheck` | `true` | 启动时查 crates.io 是否有 tokensave 新版本，有则告警 |
+| `updateCheckTimeoutMs` | 10000 | 更新检查网络超时 |
 | `promptOrder` | 150 | 提示词 section 顺序（工具指导带 100–199） |
 | `gitignoreHygiene` | `true` | 自动把 `.tokensave/` 加进 .gitignore |
 
