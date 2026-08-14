@@ -1,0 +1,29 @@
+{
+  "name": "dsh-tokensaver",
+  "version": "0.1.1",
+  "description": "DSH port of pi-tokensaver: keeps the tokensave semantic graph fresh and teaches the agent to prefer its MCP tools",
+  "type": "module",
+  "main": "src/index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Miku196/dsh-tokensave.git"
+  },
+  "homepage": "https://github.com/Miku196/dsh-tokensave#readme",
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "license": "MIT",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "tokensave",
+    "mcp",
+    "semantic-graph",
+    "token-efficient"
+  ],
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.1"
+  }
+}
