@@ -3,17 +3,11 @@
  *
  * pi-tokensaver 的 4 个阶段在 DSH 里的归属：
  *   1. init/sync 语义图 + .gitignore 卫生  → 本插件（apply 时同步执行）
- *   2. 工具桥接                            → 两种模式（config.bridge）：
- *        - "mcp"（默认）：交给官方 @deepseek-ai/dsh-mcp-client 插件，
- *          需要单独一行配置连 `tokensave serve`，工具名 mcp__tokensave__*。
- *        - "cli"：本插件直接用 `tokensave tool <name> --args <json>` 调用，
- *          无需 serve 进程、无需 MCP，工具名 tokensave_*。
+ *   2. 工具桥接                            → cli 直连（0.2.0 起 MCP 模式已移除）：
+ *        `tokensave tool <name> --args <json>` 调用，无需 serve 进程、
+ *        无需 MCP，工具名 tokensave_*。
  *   3. 系统提示词注入                        → 本插件（ctx.systemPrompt.section）
- *   4. teardown 杀 serve 进程               → mcp 模式由 mcp-client 负责；
- *                                            cli 模式无长驻进程，无需处理
- *
- * 挂载顺序（mcp 模式）：本插件行必须排在 dsh-mcp-client 行之前，
- * 保证 sync 完成后再连 serve。
+ *   4. teardown                            → 无长驻进程，无需处理
  */
 
 import { execFile } from "node:child_process";
@@ -47,11 +41,10 @@ export const Config = s.object({
   /** 保持 .gitignore 卫生（非 git 仓库自动跳过）。 */
   gitignoreHygiene: s.boolean().default(true),
   /**
-   * 工具桥接模式：
-   *   "mcp"（默认）— 配合 @deepseek-ai/dsh-mcp-client 行使用；
-   *   "cli" — 直接调 `tokensave tool`，无需 MCP、无长驻进程。
+   * 桥接模式（历史字段）：0.2.0 起 MCP 模式已移除，仅支持 "cli"（直连）。
+   * 旧的 "mcp" 值会在加载时报错——删除该键或改为 "cli" 即可。
    */
-  bridge: s.union(["mcp", "cli"]).default("mcp"),
+  bridge: s.union(["cli"]).default("cli"),
   /** cli 模式：单次工具调用超时（毫秒）。 */
   callTimeoutMs: s.number().default(120 * 1000),
   /** 启动时检查 tokensave 是否有新版本（查 crates.io API）。 */
@@ -131,10 +124,10 @@ export async function apply(ctx, config) {
     }
   }
 
-  // ── Phase 2: 工具注册（cli 模式）／提示词名称（两种模式）──
+  // ── Phase 2: 工具注册（cli 直连；0.2.0 起 MCP 模式已移除）──
   let toolNames = []; // 提示词里列出的工具名
 
-  if (binaryOk && config.bridge === "cli") {
+  if (binaryOk) {
     const tools = ctx.get("tools");
     if (tools) {
       try {
@@ -182,11 +175,8 @@ export async function apply(ctx, config) {
         logger.warn(`tokensaver: cli bridge failed (${err.message})`);
       }
     } else {
-      logger.warn("tokensaver: bridge=cli 但 ctx.tools 不可用，跳过工具注册");
+      logger.warn("tokensaver: ctx.tools 不可用，跳过工具注册");
     }
-  } else if (binaryOk) {
-    // mcp 模式：工具由 dsh-mcp-client 行注册，这里只声明提示词里的名字
-    toolNames = ["mcp__tokensave__*"];
   }
 
   // ── Phase 3: 提示词注入（只在 binary 可用时注册，避免模型被指向不存在的工具）──
@@ -211,8 +201,7 @@ export async function apply(ctx, config) {
   }
 
   // ── Phase 4: teardown ──
-  // mcp 模式：`tokensave serve` 子进程由 dsh-mcp-client 行拥有并负责回收/重连。
-  // cli 模式：无长驻进程，无需处理。
+  // 无长驻进程（cli 直连），无需处理。
 }
 
 // ---------------------------------------------------------------------------
