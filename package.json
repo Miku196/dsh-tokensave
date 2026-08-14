@@ -1,7 +1,7 @@
 {
   "name": "dsh-tokensaver",
   "version": "0.2.0",
-  "description": "DSH port of pi-tokensaver: keeps the tokensave semantic graph fresh and teaches the agent to prefer its MCP tools",
+  "description": "DSH port of pi-tokensaver: keeps the tokensave semantic graph fresh and teaches the agent to prefer its semantic tools",
   "type": "module",
   "main": "src/index.js",
   "repository": {
@@ -19,7 +19,6 @@
     "dsh",
     "deepseek-harness",
     "tokensave",
-    "mcp",
     "semantic-graph",
     "token-efficient"
   ],

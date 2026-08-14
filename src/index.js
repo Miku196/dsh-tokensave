@@ -54,7 +54,7 @@ export const Config = s.object({
 });
 
 /**
- * 插件入口。apply 期间 await 同步，保证排在后面的 mcp-client 行连接时索引已就绪。
+ * 插件入口。apply 期间 await 同步，保证工具注册前索引已就绪。
  * 任何失败都降级（只记录日志），不阻塞 profile 启动 —— 与原插件"优雅失败"一致。
  */
 export async function apply(ctx, config) {

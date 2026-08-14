@@ -81,21 +81,14 @@ dsh plugin --profile web update dsh-tokensaver
 ## 开发
 
 ```bash
-# 1. cli 桥单元自测（工具发现 / --help 解析 / schema 生成 / 真实调用）
+# cli 桥单元自测（工具发现 / --help 解析 / schema 生成 / 版本检测 / 真实调用）
 TOKENSAVE_BINARY=/path/to/tokensave TOKENSAVE_CWD=/path/to/your/project node test-cli.mjs
-
-# 2. MCP 冒烟测试（验证 tokensave serve 的 MCP 协议与工具可用性）
-TOKENSAVE_BINARY=/path/to/tokensave \
-TOKENSAVE_CWD=/path/to/your/project \
-MCP_SDK_DIR=/path/to/@modelcontextprotocol/sdk/dist/esm \
-node smoke-test.mjs
 ```
 
 ## 致谢
 
 - [pi-tokensaver](https://github.com/xilnick/pi-tokensaver)（MIT）— 本插件的功能原型
 - [tokensave](https://github.com/aovestdipaperino/tokensave) — Rust 语义图引擎
-- [@deepseek-ai/dsh-mcp-client](https://github.com/deepseek-ai/deepseek-harness) — MCP 桥接
 
 ## License
 
