@@ -8,6 +8,11 @@
     "type": "git",
     "url": "git+https://github.com/Miku196/dsh-tokensave.git"
   },
+  "dsh": {
+    "bundle": {
+      "patch": "cordis.patch.yml"
+    }
+  },
   "homepage": "https://github.com/Miku196/dsh-tokensave#readme",
   "files": [
     "src",
