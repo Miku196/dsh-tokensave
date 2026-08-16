@@ -39,13 +39,13 @@ dsh plugin --profile web add file:/path/to/dsh-tokensaver
 
 ### 挂载配置
 
-`dsh-tokensaver` 是 **bundle 插件**（自带 `cordis.patch.yml` 声明，安装后即注册）。如需覆盖默认配置（如指定 `binary`/`cwd`），在 `$DSH_HOME/profiles/web/cordis.patch.yml` 里用 **id 定位的 config override**——**不要**再 `insert` 同名条目，否则重复声明会导致 dsh 崩溃：
+`dsh-tokensaver` 是 **bundle 插件**（自带 `cordis.patch.yml` 声明，安装后即注册）。**通常无需任何配置**——工具调用自动跟随会话工作目录（见下"索引定位"）。仅在需要固定操作根时（如 headless/无会话场景），在 `$DSH_HOME/profiles/web/cordis.patch.yml` 里用 **id 定位的 config override**——**不要**再 `insert` 同名条目，否则重复声明会导致 dsh 崩溃：
 
 ```yaml
 - id: tokensaver
   config:
     binary: tokensave            # 可执行文件路径或 PATH 上的命令名（默认）
-    cwd: /path/to/your/project   # 可选：语义图所在目录（默认 process.cwd()）
+    cwd: /path/to/your/project   # 可选：固定操作根（默认跟随会话工作目录）
     autoSync: true               # 默认：启动时 init（无索引）/ sync（有索引）
 ```
 
@@ -65,7 +65,7 @@ dsh plugin --profile web update dsh-tokensaver
 | 字段 | 默认 | 说明 |
 |---|---|---|
 | `binary` | `tokensave` | 可执行文件路径或 PATH 命令名 |
-| `cwd` | `process.cwd()` | 工作目录。**可不配**：无索引时自动向上找最近索引根，全新目录自动 `init`（见下） |
+| `cwd` | 跟随会话工作目录 | 可选固定操作根。不配时每次工具调用自动使用**当前会话工作目录**（`exec.agent.session.header.cwd`），无需手动指定 |
 | `bridge` | `cli` | 历史字段（仅 `cli`）：0.2.0 起 MCP 模式已移除，填 `mcp` 会报错 |
 | `autoSync` | `true` | 启动时 `init`（无索引）/ `sync`（有索引，含祖先索引根） |
 | `syncTimeoutMs` | 600000 | 同步超时 |
@@ -75,13 +75,14 @@ dsh plugin --profile web update dsh-tokensaver
 | `promptOrder` | 150 | 提示词 section 顺序（工具指导带 100–199） |
 | `gitignoreHygiene` | `true` | 自动把 `.tokensave/` 加进 .gitignore |
 
-### 索引定位（不用为每个文件夹建索引）
+### 索引定位（零配置，不用为每个文件夹建索引）
 
-tokensave 只在**精确目录**找索引（不向上/向下查找），而索引覆盖整个目录树。插件因此自动补齐向上查找：
+tokensave 只在**精确目录**找索引（不向上/向下查找），而索引覆盖整个目录树。插件因此自动补齐：
 
-- 工作目录（`cwd`）或其任意**祖先目录**已有索引（`.tokensave/tokensave.db`）→ 直接使用该索引根，任何子目录下工具都可用；
-- 全新目录（向上找不到索引）→ 启动时自动 `init` 建索引；
-- `~/.tokensave`（tokensave 的全局配置目录）不会被误判为项目索引，主目录下不会误建索引。
+- **每次工具调用跟随当前会话工作目录**（`cwd` 未配置时）：目录或其任意**祖先**已有索引（`.tokensave/tokensave.db`）→ 直接使用该索引根，任何子目录、任何盘符（如 `D:\geo` 与 `C:\...\项目`）下工具都自动可用；
+- 全新目录（向上找不到索引）→ 首次调用时自动 `tokensave init` 建索引；
+- **安全保护**：主目录（`~`）及其直接子目录（Desktop/Documents/Downloads 等）**永不自动 init**——在这些位置工具会给出明确提示，避免误索引整个主目录；
+- `~/.tokensave`（tokensave 的全局配置目录）不会被误判为项目索引。
 
 任何失败都优雅降级：binary 缺失时只告警，不阻塞 profile 启动，也不注入提示词（避免模型调用不存在的工具）。
 

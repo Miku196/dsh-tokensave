@@ -13,6 +13,7 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { appendFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import s from "@deepseek-ai/schemastery";
@@ -30,7 +31,11 @@ export const inject = [];
 export const Config = s.object({
   /** tokensave 可执行文件路径或 PATH 上的命令名。 */
   binary: s.string().default("tokensave"),
-  /** 项目根目录；缺省用启动 dsh 的目录（process.cwd()）。 */
+  /**
+   * 项目根目录。通常**无需配置**：工具调用自动跟随会话工作目录
+   * （exec.agent.session.header.cwd），向上找最近索引，全新目录自动 init。
+   * 仅在需要固定操作根（如 headless/无会话场景）时手动指定。
+   */
   cwd: s.string().default(""),
   /** 启动时执行 init（无索引）/ sync（有索引）。false 则只注入提示词。 */
   autoSync: s.boolean().default(true),
@@ -106,20 +111,38 @@ export async function apply(ctx, config) {
   }
 
   if (binaryOk && config.autoSync) {
-    try {
-      const args = indexedRoot ? ["sync", projectRoot] : ["init", root];
-      const { stdout } = await execFileAsync(config.binary, args, {
-        cwd: projectRoot,
-        windowsHide: true,
-        timeout: config.syncTimeoutMs,
-        maxBuffer: 64 * 1024 * 1024,
-      });
-      logger.info(
-        `tokensaver: ${indexedRoot ? "sync" : "init"} ok (${projectRoot}) — ${stdout.trim() || "index ready"}`
+    if (indexedRoot) {
+      try {
+        const { stdout } = await execFileAsync(config.binary, ["sync", projectRoot], {
+          cwd: projectRoot,
+          windowsHide: true,
+          timeout: config.syncTimeoutMs,
+          maxBuffer: 64 * 1024 * 1024,
+        });
+        logger.info(
+          `tokensaver: sync ok (${projectRoot}) — ${stdout.trim() || "index ready"}`
+        );
+      } catch (err) {
+        // 同步失败不致命：serve / CLI 仍可服务已有索引
+        logger.warn(`tokensaver: index sync failed: ${err.message}`);
+      }
+    } else if (isSafeToInit(root)) {
+      try {
+        const { stdout } = await execFileAsync(config.binary, ["init", root], {
+          cwd: root,
+          windowsHide: true,
+          timeout: config.syncTimeoutMs,
+          maxBuffer: 64 * 1024 * 1024,
+        });
+        logger.info(`tokensaver: init ok (${root}) — ${stdout.trim() || "index ready"}`);
+      } catch (err) {
+        logger.warn(`tokensaver: index init failed: ${err.message}`);
+      }
+    } else {
+      logger.warn(
+        `tokensaver: no index near ${root} and auto-init skipped (home directory); ` +
+          "tools will auto-initialize per session workspace"
       );
-    } catch (err) {
-      // 同步失败不致命：serve / CLI 仍可服务已有索引
-      logger.warn(`tokensaver: index ${indexedRoot ? "sync" : "init"} failed: ${err.message}`);
     }
 
     if (config.gitignoreHygiene) {
@@ -171,11 +194,22 @@ export async function apply(ctx, config) {
               ],
             },
             async execute(args, exec) {
+              // 零配置核心：操作根跟随会话工作目录（exec.agent.session.header.cwd），
+              // 向上找最近索引；全新目录在安全位置自动 init；主目录绝不 init。
+              const sessionRoot = exec?.agent?.session?.header?.cwd || root;
+              const toolRoot = await resolveToolRoot(sessionRoot, config, logger);
+              if (!toolRoot) {
+                throw new Error(
+                  `no TokenSave index near ${sessionRoot} and auto-init is not allowed there ` +
+                    "(refusing to index the home directory); open a project directory or " +
+                    "run `tokensave init <project>` first"
+                );
+              }
               // --json 保证 stdout 恒为合法 JSON（MCP content 包装）；
               // 不带时 files 等工具输出人类可读文本，JSON.parse 会炸。
               const out = await run(
                 config.binary, ["tool", t.name, "--json", "--args", JSON.stringify(args)],
-                projectRoot, config.callTimeoutMs, exec.signal
+                toolRoot, config.callTimeoutMs, exec.signal
               );
               return unwrapToolOutput(out);
             },
@@ -439,6 +473,46 @@ export function findIndexRoot(root) {
     const parent = dirname(cur);
     if (parent === cur) return null; // 已到盘符根
     cur = parent;
+  }
+}
+
+/** 路径规范化（去尾分隔符 + 小写，Windows 路径大小写不敏感）。 */
+function normPath(p) {
+  return String(p).replace(/[\\/]+$/, "").toLowerCase();
+}
+
+/**
+ * init 保护：不为主目录本身及其直接子目录（Desktop/Documents/Downloads 等）
+ * 建索引——它们通常包含大量无关内容；具体项目目录（两层以上）才允许自动 init。
+ */
+export function isSafeToInit(dir) {
+  const d = normPath(dir);
+  const h = normPath(homedir());
+  if (!d || d === h) return false;
+  return dirname(d) !== h;
+}
+
+/** 记录已尝试过自动 init 的目录（无论成败），避免每次工具调用都重试。 */
+const initAttempted = new Set();
+
+/**
+ * 解析一次工具调用应使用的操作根：
+ * 1. 向上找最近索引，命中即用（含会话工作目录自身）；
+ * 2. 未命中：安全位置自动 `tokensave init` 一次；
+ * 3. 不安全的（主目录/其直接子目录）返回 null，由调用方给出清晰错误。
+ */
+async function resolveToolRoot(sessionRoot, config, logger) {
+  const indexed = findIndexRoot(sessionRoot);
+  if (indexed) return indexed;
+  if (!isSafeToInit(sessionRoot) || initAttempted.has(sessionRoot)) return null;
+  initAttempted.add(sessionRoot);
+  try {
+    await run(config.binary, ["init", sessionRoot], sessionRoot, config.syncTimeoutMs);
+    logger.info(`tokensaver: auto-initialized index at ${sessionRoot}`);
+    return sessionRoot;
+  } catch (err) {
+    logger.warn(`tokensaver: auto-init failed at ${sessionRoot}: ${err.message}`);
+    return null;
   }
 }
 
