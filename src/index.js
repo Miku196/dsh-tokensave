@@ -171,13 +171,13 @@ export async function apply(ctx, config) {
               ],
             },
             async execute(args, exec) {
+              // --json 保证 stdout 恒为合法 JSON（MCP content 包装）；
+              // 不带时 files 等工具输出人类可读文本，JSON.parse 会炸。
               const out = await run(
-                config.binary, ["tool", t.name, "--args", JSON.stringify(args)],
+                config.binary, ["tool", t.name, "--json", "--args", JSON.stringify(args)],
                 projectRoot, config.callTimeoutMs, exec.signal
               );
-              const trimmed = out.trim();
-              if (!trimmed) return null;
-              return JSON.parse(trimmed);
+              return unwrapToolOutput(out);
             },
           }));
           toolNames.push(publicName);
@@ -310,6 +310,31 @@ export function extractToolDescription(helpText) {
     i++;
   }
   return desc.join(" ").trim();
+}
+
+/**
+ * 解包 `tokensave tool <name> --json` 的统一输出。
+ * CLI 的 --json 把所有工具的输出包装成 `{"content":[{"type":"text","text":...}]}`：
+ * - status/search 等内层 text 是 JSON 字符串 → 还原为纯数据；
+ * - files 等内层 text 是人类可读文本 → 原样返回字符串；
+ * - 极端情况（仍非 JSON）→ 原样返回文本，绝不抛 SyntaxError。
+ */
+export function unwrapToolOutput(raw) {
+  const trimmed = String(raw ?? "").trim();
+  if (!trimmed) return null;
+  let value;
+  try {
+    value = JSON.parse(trimmed);
+  } catch {
+    return trimmed;
+  }
+  const text = value?.content?.[0]?.text;
+  if (typeof text !== "string") return value;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
 }
 
 /** kebab-case → camelCase（--path-exclude → pathExclude）。 */
