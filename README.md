@@ -37,9 +37,14 @@ dsh plugin --profile web add github:Miku196/dsh-tokensave
 dsh plugin --profile web add file:/path/to/dsh-tokensave
 ```
 
-### 挂载配置
+### 挂载配置（默认零配置，不用改任何文件）
 
-`dsh-tokensaver` 是 **bundle 插件**（自带 `cordis.patch.yml` 声明，安装后即注册）。**通常无需任何配置**——工具调用自动跟随会话工作目录（见下"索引定位"）。仅在需要固定操作根时（如 headless/无会话场景），在 `$DSH_HOME/profiles/web/cordis.patch.yml` 里用 **id 定位的 config override**——**不要**再 `insert` 同名条目，否则重复声明会导致 dsh 崩溃：
+`dsh-tokensaver` 是 **bundle 插件**（自带 `cordis.patch.yml` 声明，安装后即注册）。**安装后无需修改任何配置**——`cordis.patch.yml` 里不需要（也不应该）出现 `tokensaver` 条目：
+
+- ❌ **不要** `insert` 同名条目——重复声明会导致 dsh 崩溃；
+- ✅ 工具调用自动跟随会话工作目录、向上找最近索引、全新目录自动 init（见下"索引定位"）。
+
+仅在特殊需求时（如 headless/无会话场景需要固定操作根），在 `$DSH_HOME/profiles/web/cordis.patch.yml` 里按 **id 定位的 config override** 覆盖：
 
 ```yaml
 - id: tokensaver
