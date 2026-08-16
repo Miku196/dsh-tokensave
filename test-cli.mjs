@@ -3,7 +3,7 @@
  * 运行前需要 node_modules 链接（见根 README 开发节）。
  */
 import { execFileSync } from "node:child_process";
-import { discoverTools, parseToolHelp, buildToolSchema, kebabToCamel, parseVersion, isNewer, fetchLatestTokensaveVersion } from "./src/index.js";
+import { discoverTools, parseToolHelp, buildToolSchema, kebabToCamel, parseVersion, isNewer, fetchLatestTokensaveVersion, extractToolDescription } from "./src/index.js";
 
 const BIN = process.env.TOKENSAVE_BINARY ?? "C:\\Users\\wangz\\.cargo\\bin\\tokensave.exe";
 const CWD = process.env.TOKENSAVE_CWD ?? process.cwd();
@@ -19,12 +19,15 @@ console.log("   callers desc:", callers?.description.slice(0, 60));
 console.log("   status exists:", !!status);
 if (!search || !callers || !status) throw new Error("discovery incomplete");
 
-// 2. --help 解析 + schema 生成
+// 2. --help 解析 + schema 生成 + 完整描述提取
 for (const t of [search, callers, status]) {
   const help = execFileSync(BIN, ["tool", t.name, "--help"], { cwd: CWD, encoding: "utf8", windowsHide: true });
   const params = parseToolHelp(help);
   const schema = buildToolSchema(t.name, t.description, params);
   console.log(`2) ${t.name}: ${params.length} params ->`, JSON.stringify(schema));
+  const fullDesc = extractToolDescription(help);
+  console.log(`   full desc (${fullDesc.length} chars):`, fullDesc.slice(0, 70));
+  if (fullDesc && /…$/.test(fullDesc)) throw new Error(`description still truncated for ${t.name}`);
 }
 
 // 3. kebab → camel

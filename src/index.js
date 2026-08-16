@@ -13,7 +13,7 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { appendFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import s from "@deepseek-ai/schemastery";
 import { defineTool } from "@deepseek-ai/dsh-tools";
@@ -61,6 +61,14 @@ export async function apply(ctx, config) {
   const root = config.cwd || process.cwd();
   const logger = ctx.logger ?? console;
 
+  // tokensave 只在精确目录找索引（不向上查找）。向上找最近的已索引目录作为
+  // 操作根：任何子目录下工作都自动命中已有索引；全新目录才走 init。
+  const indexedRoot = findIndexRoot(root);
+  const projectRoot = indexedRoot ?? root;
+  if (indexedRoot) {
+    logger.info(`tokensaver: index root ${projectRoot} (nearest ancestor of ${root})`);
+  }
+
   // ── Phase 1: 校验 binary + 同步语义图 ──
   let binaryOk = false;
   let installedVersion = "";
@@ -99,20 +107,19 @@ export async function apply(ctx, config) {
 
   if (binaryOk && config.autoSync) {
     try {
-      const indexed = existsSync(join(root, ".tokensave"));
-      const args = indexed ? ["sync", root] : ["init", root];
+      const args = indexedRoot ? ["sync", projectRoot] : ["init", root];
       const { stdout } = await execFileAsync(config.binary, args, {
-        cwd: root,
+        cwd: projectRoot,
         windowsHide: true,
         timeout: config.syncTimeoutMs,
         maxBuffer: 64 * 1024 * 1024,
       });
       logger.info(
-        `tokensaver: ${indexed ? "sync" : "init"} ok (${root}) — ${stdout.trim() || "index ready"}`
+        `tokensaver: ${indexedRoot ? "sync" : "init"} ok (${projectRoot}) — ${stdout.trim() || "index ready"}`
       );
     } catch (err) {
       // 同步失败不致命：serve / CLI 仍可服务已有索引
-      logger.warn(`tokensaver: index ${existsSync(join(root, ".tokensave")) ? "sync" : "init"} failed: ${err.message}`);
+      logger.warn(`tokensaver: index ${indexedRoot ? "sync" : "init"} failed: ${err.message}`);
     }
 
     if (config.gitignoreHygiene) {
@@ -131,15 +138,20 @@ export async function apply(ctx, config) {
     const tools = ctx.get("tools");
     if (tools) {
       try {
-        const discovered = await discoverTools(config.binary, root);
+        const discovered = await discoverTools(config.binary, projectRoot);
         // 并行取每个工具的 --help 以生成参数 schema
         const withSchemas = await Promise.all(
           discovered.map(async (t) => {
             try {
               const help = await run(
-                config.binary, ["tool", t.name, "--help"], root, config.callTimeoutMs
+                config.binary, ["tool", t.name, "--help"], projectRoot, config.callTimeoutMs
               );
-              return { ...t, params: parseToolHelp(help) };
+              return {
+                ...t,
+                // `tokensave tool` 列表里的描述会被截断（~120 字符），--help 首段才是完整的
+                description: extractToolDescription(help) || t.description,
+                params: parseToolHelp(help),
+              };
             } catch {
               return { ...t, params: [] };
             }
@@ -161,7 +173,7 @@ export async function apply(ctx, config) {
             async execute(args, exec) {
               const out = await run(
                 config.binary, ["tool", t.name, "--args", JSON.stringify(args)],
-                root, config.callTimeoutMs, exec.signal
+                projectRoot, config.callTimeoutMs, exec.signal
               );
               const trimmed = out.trim();
               if (!trimmed) return null;
@@ -188,7 +200,7 @@ export async function apply(ctx, config) {
       text: [
         "## TokenSave semantic graph tools",
         "",
-        `Prefer the \`${toolNames[0]}\` tools for codebase exploration — finding`,
+        `Prefer the \`tokensave_*\` tools (${toolNames.length} available) for codebase exploration — finding`,
         "functions, their callers, types, and imports. They query a pre-built local",
         "semantic graph and are dramatically more token-efficient than reading whole",
         "files or running raw grep/glob.",
@@ -209,15 +221,20 @@ export async function apply(ctx, config) {
 // ---------------------------------------------------------------------------
 
 /** 执行一次 tokensave CLI 调用；非零退出抛错，stdout 原样返回。 */
-async function run(binary, args, cwd, timeoutMs, signal) {
-  const { stdout } = await execFileAsync(binary, args, {
-    cwd,
-    windowsHide: true,
-    timeout: timeoutMs,
-    maxBuffer: 64 * 1024 * 1024,
-    ...(signal ? { signal } : {}),
-  });
-  return stdout;
+export async function run(binary, args, cwd, timeoutMs, signal) {
+  try {
+    const { stdout } = await execFileAsync(binary, args, {
+      cwd,
+      windowsHide: true,
+      timeout: timeoutMs,
+      maxBuffer: 64 * 1024 * 1024,
+      ...(signal ? { signal } : {}),
+    });
+    return stdout;
+  } catch (err) {
+    // execFile 非零退出时 err.message 只有 "Command failed: ..."，真正原因在 stderr
+    throw new Error((err.stderr || "").trim() || err.message);
+  }
 }
 
 /**
@@ -274,6 +291,25 @@ export function parseToolHelp(helpText) {
     }
   }
   return params;
+}
+
+/**
+ * 从 `tool <name> --help` 输出提取完整工具描述（标题行后的第一段非空文本）。
+ * `tokensave tool` 裸命令列表里的描述会按显示宽度截断（~120 字符 + "…"），
+ * 而 --help 首段是完整描述，供工具注册使用。
+ */
+export function extractToolDescription(helpText) {
+  const lines = helpText.split(/\r?\n/);
+  let i = 1; // 跳过 "tokensave tool <name>" 标题行
+  while (i < lines.length && !lines[i].trim()) i++;
+  const desc = [];
+  while (i < lines.length) {
+    const t = lines[i].trim();
+    if (!t || t === "Parameters:" || t.startsWith("(no parameters)") || t.startsWith("Reserved flags")) break;
+    desc.push(t);
+    i++;
+  }
+  return desc.join(" ").trim();
 }
 
 /** kebab-case → camelCase（--path-exclude → pathExclude）。 */
@@ -356,6 +392,30 @@ export async function fetchLatestTokensaveVersion(timeoutMs = 10_000) {
 // ---------------------------------------------------------------------------
 // gitignore 卫生
 // ---------------------------------------------------------------------------
+
+/**
+ * 项目索引是否存在：以 `.tokensave/tokensave.db` 为准。
+ * 注意不能只查 `.tokensave` 目录：`~/.tokensave` 是 tokensave 的全局配置目录
+ * （global.db / config.toml），与项目索引同名，误判会导致 sync/init 永远走错分支。
+ */
+function hasProjectIndex(root) {
+  return existsSync(join(root, ".tokensave", "tokensave.db"));
+}
+
+/**
+ * 从 root 向上查找最近的已索引目录（含 root 自身），找不到返回 null。
+ * tokensave 只在精确目录找索引，而索引覆盖整个目录树——祖先目录的索引
+ * 天然覆盖其所有子目录，因此向上命中即可直接使用，无需为每个子目录建索引。
+ */
+export function findIndexRoot(root) {
+  let cur = root;
+  for (;;) {
+    if (hasProjectIndex(cur)) return cur;
+    const parent = dirname(cur);
+    if (parent === cur) return null; // 已到盘符根
+    cur = parent;
+  }
+}
 
 /**
  * 像 pi-tokensaver 一样，把 `.tokensave/` 追加进 .gitignore（尊重全局 ignore 规则）。
