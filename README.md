@@ -34,7 +34,7 @@ dsh plugin --profile web add github:Miku196/dsh-tokensave
 ### 本地开发安装
 
 ```bash
-dsh plugin --profile web add file:/path/to/dsh-tokensaver
+dsh plugin --profile web add file:/path/to/dsh-tokensave
 ```
 
 ### 挂载配置
@@ -93,8 +93,13 @@ tokensave 只在**精确目录**找索引（不向上/向下查找），而索�
 npm install    # 或手动建 junction：见 test-cli.mjs 头部注释
 
 # 2. cli 桥单元自测（工具发现 / --help 解析 / schema 生成 / 版本检测 / 真实调用）
-#    TOKENSAVE_BINARY 指向 tokensave 可执行文件；TOKENSAVE_CWD 指向索引根目录
-TOKENSAVE_BINARY=/path/to/tokensave TOKENSAVE_CWD=/path/to/indexed/project node test-cli.mjs
+#    Windows（PowerShell）：
+$env:TOKENSAVE_BINARY = "C:\path\to\tokensave.exe"
+$env:TOKENSAVE_CWD = "C:\path\to\indexed\project"
+node test-cli.mjs
+
+#    macOS / Linux：
+#    TOKENSAVE_BINARY=/path/to/tokensave TOKENSAVE_CWD=/path/to/indexed/project node test-cli.mjs
 ```
 
 ## 致谢
